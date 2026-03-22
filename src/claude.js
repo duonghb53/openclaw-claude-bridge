@@ -19,6 +19,12 @@ function resolveModel(modelId) {
     return modelMap[modelId] || modelId;
 }
 
+/** Context window size per model, derived from the resolved CLI model name. */
+function getContextWindow(modelId) {
+    const resolved = resolveModel(modelId);
+    return resolved.includes('[1m]') ? 1_000_000 : 200_000;
+}
+
 /**
  * Run Claude CLI with the given system prompt and conversation text.
  *
@@ -43,10 +49,10 @@ function mapEffort(reasoningEffort) {
     if (!reasoningEffort) return null;
     const map = {
         'minimal': 'low',
-        'low':     'low',
-        'medium':  'medium',
-        'high':    'high',
-        'xhigh':   'high',
+        'low':     'medium',
+        'medium':  'high',
+        'high':    'max',
+        'xhigh':   'max',
     };
     return map[reasoningEffort] || null;
 }
@@ -219,4 +225,4 @@ function handleEvent(event, onChunk, setFull, setUsage) {
     }
 }
 
-module.exports = { runClaude };
+module.exports = { runClaude, getContextWindow };

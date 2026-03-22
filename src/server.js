@@ -6,7 +6,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { convertMessages, convertMessagesCompact, extractNewMessages, extractNewUserMessages } = require('./convert');
 const { buildToolInstructions } = require('./tools');
-const { runClaude } = require('./claude');
+const { runClaude, getContextWindow } = require('./claude');
 
 // --- Session cleanup ---
 // Claude CLI subprocess runs with cwd=/tmp. On macOS /tmp → /private/tmp,
@@ -367,6 +367,7 @@ app.post('/v1/chat/completions', async (req, res) => {
         const { messages = [], tools = [], model = 'claude-opus-latest', stream = true, reasoning_effort } = req.body;
         stats.lastModel = model;
         logEntry.model = model;
+        logEntry.contextWindow = getContextWindow(model);
         logEntry.tools = tools.length;
         logEntry.effort = reasoning_effort || null;
         logEntry.thinking = !!reasoning_effort;
@@ -543,7 +544,7 @@ app.post('/v1/chat/completions', async (req, res) => {
                 const inToolLoop = extractNewMessages(messages) !== null;
                 if (!inToolLoop) {
                     const compactResult = convertMessagesCompact(messages);
-                    if (compactResult.promptText.length > 300000) {
+                    if (compactResult.promptText.length > 1500000) {
                         console.log(`[${requestId}] REFRESH SKIPPED: compact prompt too long (${compactResult.promptText.length})`);
                     } else {
                         const oldSid = entry.sessionId;
@@ -931,6 +932,11 @@ statusApp.get('/status', (req, res) => {
             sessionId: val.sessionId.slice(0, 8),
             age: Math.floor((Date.now() - val.createdAt) / 1000),
         })),
+        contextWindows: {
+            'claude-opus-latest': getContextWindow('claude-opus-latest'),
+            'claude-sonnet-latest': getContextWindow('claude-sonnet-latest'),
+            'claude-haiku-latest': getContextWindow('claude-haiku-latest'),
+        },
         activity: globalActivity.slice(-30),
         log: [...requestLog].reverse(),
     });

@@ -63,11 +63,11 @@ export function AgentPanel({ group, isAllAgents }: AgentPanelProps) {
     : channelEntries
 
   // Per-session stats (ctx, cost, req count), ordered by recency
-  const CTX_MAX = 200_000
+  const CTX_DEFAULT = 200_000
   const CTX_VISIBLE = 5
   const sessionCtx = useMemo(() => {
     // First pass: aggregate per-session stats
-    const map = new Map<string, { sid: string; used: number; pct: number; agent: string; cost: number; reqs: number }>()
+    const map = new Map<string, { sid: string; used: number; max: number; pct: number; agent: string; cost: number; reqs: number }>()
     const order: string[] = []
     for (const e of entries) {
       const sid = e.cliSessionId
@@ -78,10 +78,12 @@ export function AgentPanel({ group, isAllAgents }: AgentPanelProps) {
           (e.inputTokens || 0) +
           (e.cacheWriteTokens || 0) +
           (e.cacheReadTokens || 0)
+        const ctxMax = (e as any).contextWindow || CTX_DEFAULT
         map.set(sid, {
           sid,
           used,
-          pct: Math.round((used / CTX_MAX) * 100),
+          max: ctxMax,
+          pct: Math.round((used / ctxMax) * 100),
           agent: e.agent || "unknown",
           cost: e.costUsd || 0,
           reqs: 1,
@@ -162,7 +164,7 @@ export function AgentPanel({ group, isAllAgents }: AgentPanelProps) {
         <div className="border-b border-border/30 shrink-0 px-3 py-2 max-h-[120px] overflow-y-auto scrollbar-thin bg-muted/10">
           <div className="flex gap-2 flex-wrap">
             {sessionCtx.slice(0, CTX_VISIBLE).map((s) => (
-              <CtxCard key={s.sid} {...s} max={CTX_MAX} />
+              <CtxCard key={s.sid} {...s} max={s.max} />
             ))}
             {sessionCtx.length > CTX_VISIBLE && (
               <div className="flex items-center px-2 text-[0.7rem] text-muted-foreground/50">

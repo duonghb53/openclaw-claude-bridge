@@ -182,14 +182,14 @@ Dashboard 詳細架構請參閱 [docs/architecture.md](docs/architecture.md#dash
           {
             "id": "claude-opus-latest",
             "name": "Claude Opus",
-            "contextWindow": 200000,
+            "contextWindow": 1000000,
             "maxTokens": 128000,
             "reasoning": true
           },
           {
             "id": "claude-sonnet-latest",
             "name": "Claude Sonnet",
-            "contextWindow": 200000,
+            "contextWindow": 1000000,
             "maxTokens": 64000,
             "reasoning": true
           }

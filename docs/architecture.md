@@ -271,7 +271,7 @@ The bridge hashes the first 500 characters and compares it against the stored ha
    - Old tool results: capped at 500 characters
 4. The compaction hash is stored to prevent re-triggering
 
-If the compact prompt exceeds 300,000 characters, the refresh is skipped to avoid overwhelming the CLI.
+If the compact prompt exceeds 1,500,000 characters, the refresh is skipped to avoid overwhelming the CLI.
 
 Context refresh is deferred if a tool loop is in progress — the bridge waits until the tool loop completes before refreshing.
 
@@ -562,7 +562,7 @@ A row of mini cards showing per-session context window usage. Each card displays
 - **Session ID** (color-coded — each session gets a unique color from a 12-color palette)
 - **Agent name**
 - **Progress bar**: Visual representation of context usage
-- **Percentage + token counts**: e.g. "42% · 84K / 200K"
+- **Percentage + token counts**: e.g. "42% · 84K / 1.0M"
 - **Request count + cost**: e.g. "5 req · $0.0142"
 
 Progress bar colors follow traffic-light convention:

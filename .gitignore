@@ -3,6 +3,7 @@ node_modules/
 
 # Environment — contains secrets (DASHBOARD_PASS), never commit
 .env
+.env.bak*
 
 # Runtime state — contains session IDs, channel names, request history
 state.json
@@ -24,3 +25,4 @@ SECURITY-AUDIT.md
 
 # Internal docs — design notes, not for public
 docs/internal/
+CLAUDE.md

@@ -147,8 +147,8 @@ For detailed architecture of the dashboard, see [docs/architecture.md](docs/arch
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DASHBOARD_PASS` | No | — | Dashboard password (Basic Auth, user: `admin`) |
-| `OPUS_MODEL` | No | `opus` | CLI model alias for Opus |
-| `SONNET_MODEL` | No | `sonnet` | CLI model alias for Sonnet |
+| `OPUS_MODEL` | No | `opus` | CLI model alias for Opus (use `opus[1m]` for 1M context) |
+| `SONNET_MODEL` | No | `sonnet` | CLI model alias for Sonnet (use `sonnet[1m]` for 1M context) |
 | `HAIKU_MODEL` | No | `haiku` | CLI model alias for Haiku |
 | `IDLE_TIMEOUT_MS` | No | `120000` | Kill CLI subprocess after this many ms of no output |
 | `OPENCLAW_BRIDGE_PORT` | No | `3456` | API server port |
@@ -182,14 +182,14 @@ Add this provider to your OpenClaw config (`~/.openclaw/openclaw.json`):
           {
             "id": "claude-opus-latest",
             "name": "Claude Opus",
-            "contextWindow": 200000,
+            "contextWindow": 1000000,
             "maxTokens": 128000,
             "reasoning": true
           },
           {
             "id": "claude-sonnet-latest",
             "name": "Claude Sonnet",
-            "contextWindow": 200000,
+            "contextWindow": 1000000,
             "maxTokens": 64000,
             "reasoning": true
           }

@@ -45,6 +45,7 @@ export interface StatusData {
   errors: number
   sessions: { count: number; sizeKB: number }
   channels: ChannelInfo[]
+  contextWindows?: Record<string, number>
   activity: ActivityItem[]
   log: LogEntry[]
 }
