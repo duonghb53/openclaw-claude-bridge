@@ -154,7 +154,7 @@ const responseMap = new Map();
 const MEMORY_GC_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 // Per-channel concurrent request limit (prevents bug loops while allowing multi-channel usage)
-const MAX_PER_CHANNEL = parseInt(process.env.MAX_PER_CHANNEL) || 2;
+const MAX_PER_CHANNEL = parseInt(process.env.MAX_PER_CHANNEL) || 1;
 const MAX_GLOBAL = parseInt(process.env.MAX_GLOBAL) || 20;
 const channelActive = new Map(); // channel → count of in-flight requests
 
@@ -653,7 +653,16 @@ app.post('/v1/chat/completions', async (req, res) => {
             if (isStream) { res.write(`data: ${JSON.stringify(chunk)}\n\n`); chunksSent++; }
         };
 
-        // Progress: logged server-side + captured for dashboard (not streamed to client)
+        // Send an initial SSE comment as keepalive so OC knows the connection is alive
+        // and doesn't retry/timeout while Claude is thinking.
+        if (isStream) {
+            res.write(': keepalive\n\n');
+        }
+
+        // Progress: logged server-side + captured for dashboard.
+        // Also send periodic SSE comments to keep the connection alive.
+        let lastKeepalive = Date.now();
+        const KEEPALIVE_INTERVAL_MS = 15000; // 15s
         const onChunk = (text) => {
             const msg = text.trim();
             if (!msg) return;
@@ -661,6 +670,12 @@ app.post('/v1/chat/completions', async (req, res) => {
             console.log(`[${requestId}] ${msg}`);
             logEntry.activity.push(msg);
             pushActivity(requestId, msg);
+
+            // Send SSE comment keepalive periodically while Claude is working
+            if (isStream && Date.now() - lastKeepalive > KEEPALIVE_INTERVAL_MS) {
+                res.write(': keepalive\n\n');
+                lastKeepalive = Date.now();
+            }
         };
 
         // Abort signal: kill Claude CLI when client disconnects before response is sent

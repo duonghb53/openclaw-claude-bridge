@@ -110,7 +110,7 @@ function runClaude(systemPrompt, promptText, modelId, onChunk, signal, reasoning
 
         const args = [
             '--print',
-            '--dangerously-skip-permissions',
+            // '--dangerously-skip-permissions',
             '--output-format', 'stream-json',
             '--verbose',
         ];
