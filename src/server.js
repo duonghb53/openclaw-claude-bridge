@@ -673,6 +673,9 @@ app.post('/v1/chat/completions', async (req, res) => {
         logEntry.channel = convLabel ? convLabel.replace(/^Guild\s+/, '').slice(0, 30) : null;
         logEntry.agent = agentName || null;
         console.log(`[${requestId}] model=${model} tools=${tools.length} promptLen=${promptText.length} resume=${isResume}`);
+        if (process.env.DEBUG_IO) {
+            console.log(`[${requestId}] INPUT>>>\n${promptText.slice(0, 2000)}${promptText.length > 2000 ? '\n[... truncated]' : ''}\n<<<INPUT`);
+        }
 
         const isStream = stream !== false;
         if (isStream) {
@@ -785,6 +788,10 @@ app.post('/v1/chat/completions', async (req, res) => {
                 }
                 return;
             }
+        }
+
+        if (process.env.DEBUG_IO) {
+            console.log(`[${requestId}] OUTPUT>>>\n${(finalText || '').slice(0, 2000)}${(finalText || '').length > 2000 ? '\n[... truncated]' : ''}\n<<<OUTPUT`);
         }
 
         logEntry.inputTokens = finalUsage.input_tokens;
