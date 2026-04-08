@@ -96,14 +96,18 @@ function mapEffort(reasoningEffort) {
 function runClaude(systemPrompt, promptText, modelId, onChunk, signal, reasoningEffort, sessionId, isResume) {
     // Stable alias per session — see getSessionAlias() above.
     const { alias, aliasLower } = getSessionAlias(sessionId);
+    // Replace OpenClaw/openclaw with alias, but only as standalone words
+    // (not inside file paths like /root/.openclaw/...)
+    const ocRe = /(?<![/.\w])OpenClaw(?![/.\w])/g;
+    const ocLowerRe = /(?<![/.\w])openclaw(?![/.\w])/g;
     if (systemPrompt) {
         systemPrompt = systemPrompt
-            .replace(/OpenClaw/g, alias)
-            .replace(/openclaw/g, aliasLower);
+            .replace(ocRe, alias)
+            .replace(ocLowerRe, aliasLower);
     }
     promptText = promptText
-        .replace(/OpenClaw/g, alias)
-        .replace(/openclaw/g, aliasLower);
+        .replace(ocRe, alias)
+        .replace(ocLowerRe, aliasLower);
 
     return new Promise((resolve, reject) => {
         const model = resolveModel(modelId);

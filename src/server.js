@@ -158,6 +158,36 @@ const MAX_PER_CHANNEL = parseInt(process.env.MAX_PER_CHANNEL) || 1;
 const MAX_GLOBAL = parseInt(process.env.MAX_GLOBAL) || 20;
 const channelActive = new Map(); // channel → count of in-flight requests
 
+// --- Dedup: prevent OC from sending the same message multiple times ---
+const DEDUP_TTL_MS = parseInt(process.env.DEDUP_TTL_MS) || 30000; // 30s window
+const dedupCache = new Map(); // dedupKey → { response, expireAt }
+
+/** Build a dedup key from routingKey + last user message content. */
+function buildDedupKey(routingKey, messages) {
+    if (!routingKey) return null;
+    // Find the last user message
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+            const content = typeof messages[i].content === 'string'
+                ? messages[i].content
+                : Array.isArray(messages[i].content)
+                    ? messages[i].content.filter(p => p.type === 'text').map(p => p.text).join('')
+                    : '';
+            // Hash: routingKey + first 500 chars of last user message
+            return `${routingKey}::${content.slice(0, 500)}`;
+        }
+    }
+    return null;
+}
+
+// Evict expired dedup entries every 30s
+setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of dedupCache) {
+        if (v.expireAt < now) dedupCache.delete(k);
+    }
+}, 30000).unref();
+
 /** First 200 chars of text as a lookup key. */
 function contentKey(text) {
     if (!text) return null;
@@ -439,6 +469,21 @@ app.post('/v1/chat/completions', async (req, res) => {
             : null;
         if (routingKey) {
             console.log(`[${requestId}] OC channel: "${convLabel}" agent: "${agentName || '(none)'}" routingKey: "${routingKey}"`);
+        }
+
+        // --- Dedup: return cached response if OC retries the same message ---
+        const dedupKey = buildDedupKey(routingKey, messages);
+        if (dedupKey && dedupCache.has(dedupKey)) {
+            const cached = dedupCache.get(dedupKey);
+            if (cached.expireAt > Date.now()) {
+                console.log(`[${requestId}] DEDUP HIT: returning cached response for "${routingKey}" (${Math.round((cached.expireAt - Date.now()) / 1000)}s left)`);
+                logEntry.status = 'ok';
+                logEntry.resumeMethod = 'dedup';
+                logEntry.durationMs = Date.now() - startTime;
+                pushActivity(requestId, `♻ dedup hit — cached response`);
+                return res.json(cached.response);
+            }
+            dedupCache.delete(dedupKey);
         }
 
         // --- Per-channel and global concurrent limits ---
@@ -886,6 +931,17 @@ app.post('/v1/chat/completions', async (req, res) => {
         const rKey = contentKey(cleanedForMap);
         if (rKey) {
             responseMap.set(rKey, { sessionId, createdAt: Date.now() });
+        }
+
+        // Cache response for dedup (non-tool-call responses only)
+        if (dedupKey && toolCalls.length === 0) {
+            const cachedResponse = {
+                id: completionId, object: 'chat.completion',
+                created: Math.floor(Date.now() / 1000), model,
+                choices: [{ index: 0, message: { role: 'assistant', content: cleanResponseText(finalText) || '' }, finish_reason: 'stop' }],
+                usage: usagePayload,
+            };
+            dedupCache.set(dedupKey, { response: cachedResponse, expireAt: Date.now() + DEDUP_TTL_MS });
         }
 
         logEntry.status = 'ok';
