@@ -4,19 +4,41 @@ const { spawn } = require('child_process');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 
-// --- Random alias per request ---
+// --- Stable alias per CLI session ---
+// Each session keeps one alias so resumed requests don't accumulate different
+// names in the Claude context (which would leak un-replaced aliases in output).
 const PREFIXES = ['Chat', 'Dev', 'Run', 'Ask', 'Net', 'App', 'Zen', 'Arc', 'Dot', 'Amp', 'Hex', 'Orb', 'Elm', 'Oak', 'Sky'];
 const SUFFIXES = ['Kit', 'Box', 'Pod', 'Hub', 'Lab', 'Ops', 'Bay', 'Tap', 'Rim', 'Fog', 'Dew', 'Fin', 'Gem', 'Jet', 'Cog'];
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const sessionAliasMap = new Map(); // sessionId → { alias, aliasLower, lastUsed }
 
-function getSessionAlias() {
+function getSessionAlias(sessionId) {
+    if (!sessionId) {
+        const alias = pick(PREFIXES) + pick(SUFFIXES);
+        return { alias, aliasLower: alias.toLowerCase() };
+    }
+    let entry = sessionAliasMap.get(sessionId);
+    if (entry) {
+        entry.lastUsed = Date.now();
+        return entry;
+    }
     const alias = pick(PREFIXES) + pick(SUFFIXES);
-    return { alias, aliasLower: alias.toLowerCase() };
+    entry = { alias, aliasLower: alias.toLowerCase(), lastUsed: Date.now() };
+    sessionAliasMap.set(sessionId, entry);
+    return entry;
 }
 
-function clearSessionAlias() {
-    // no-op (kept for API compat with server.js)
+function clearSessionAlias(sessionId) {
+    sessionAliasMap.delete(sessionId);
 }
+
+// Evict stale entries every 10 min (unused >1h)
+setInterval(() => {
+    const cutoff = Date.now() - 3600_000;
+    for (const [id, e] of sessionAliasMap) {
+        if (e.lastUsed < cutoff) sessionAliasMap.delete(id);
+    }
+}, 600_000).unref();
 
 /**
  * Map OpenClaw model IDs to Claude CLI model names.
@@ -74,18 +96,15 @@ function mapEffort(reasoningEffort) {
 function runClaude(systemPrompt, promptText, modelId, onChunk, signal, reasoningEffort, sessionId, isResume) {
     // Stable alias per session — see getSessionAlias() above.
     const { alias, aliasLower } = getSessionAlias(sessionId);
-    // Replace OpenClaw/openclaw with alias, but only as standalone words
-    // (not inside file paths like /root/.openclaw/...)
-    const ocRe = /(?<![/.\w])OpenClaw(?![/.\w])/g;
-    const ocLowerRe = /(?<![/.\w])openclaw(?![/.\w])/g;
+
     if (systemPrompt) {
         systemPrompt = systemPrompt
-            .replace(ocRe, alias)
-            .replace(ocLowerRe, aliasLower);
+            .replace(/OpenClaw/g, alias)
+            .replace(/openclaw/g, aliasLower);
     }
     promptText = promptText
-        .replace(ocRe, alias)
-        .replace(ocLowerRe, aliasLower);
+        .replace(/OpenClaw/g, alias)
+        .replace(/openclaw/g, aliasLower);
 
     return new Promise((resolve, reject) => {
         const model = resolveModel(modelId);
