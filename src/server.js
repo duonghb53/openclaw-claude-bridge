@@ -162,20 +162,25 @@ const channelActive = new Map(); // channel → count of in-flight requests
 const DEDUP_TTL_MS = parseInt(process.env.DEDUP_TTL_MS) || 30000; // 30s window
 const dedupCache = new Map(); // dedupKey → { response, expireAt }
 
-/** Build a dedup key from routingKey + last user message content. */
+/** Build a dedup key from routingKey + Telegram message_id (or last user content).
+ *  Uses message_id for stable dedup across tool loops. */
 function buildDedupKey(routingKey, messages) {
     if (!routingKey) return null;
-    // Find the last user message
     for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === 'user') {
-            const content = typeof messages[i].content === 'string'
-                ? messages[i].content
-                : Array.isArray(messages[i].content)
-                    ? messages[i].content.filter(p => p.type === 'text').map(p => p.text).join('')
-                    : '';
-            // Hash: routingKey + first 500 chars of last user message
-            return `${routingKey}::${content.slice(0, 500)}`;
+        if (messages[i].role !== 'user') continue;
+        const content = typeof messages[i].content === 'string'
+            ? messages[i].content
+            : Array.isArray(messages[i].content)
+                ? messages[i].content.filter(p => p.type === 'text').map(p => p.text).join('')
+                : '';
+        // Skip OC system messages
+        if (content.startsWith('Pre-compaction') || content.startsWith('Read HEARTBEAT') || content.startsWith('The conversation history before')) continue;
+        // Use Telegram message_id for stable key across tool loop retries
+        const msgIdMatch = content.match(/"message_id":\s*"(\d+)"/);
+        if (msgIdMatch) {
+            return `${routingKey}::msg:${msgIdMatch[1]}`;
         }
+        return `${routingKey}::${content.slice(0, 500)}`;
     }
     return null;
 }
@@ -331,6 +336,8 @@ function cleanResponseText(text) {
         .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
         .replace(/<tool_result[\s\S]*?<\/tool_result>/g, '')
         .replace(/<previous_response>[\s\S]*?<\/previous_response>/g, '')
+        // Strip "Tool Results:" blocks that Claude echoes from context
+        .replace(/Tool Results?:\s*\n[\s\S]*?(?=\n\n|$)/g, '')
         .trim();
 }
 
