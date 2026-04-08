@@ -677,7 +677,10 @@ app.post('/v1/chat/completions', async (req, res) => {
             console.log(`[${requestId}] INPUT>>>\n${promptText.slice(0, 2000)}${promptText.length > 2000 ? '\n[... truncated]' : ''}\n<<<INPUT`);
         }
 
-        const isStream = stream !== false;
+        // Force non-stream: always buffer full response and return as single JSON
+        // OC sends stream=true but for Telegram/chat we only need the final result
+        const FORCE_NO_STREAM = process.env.FORCE_NO_STREAM === '1';
+        const isStream = FORCE_NO_STREAM ? false : stream !== false;
         if (isStream) {
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
