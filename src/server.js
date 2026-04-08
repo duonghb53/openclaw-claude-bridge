@@ -337,12 +337,32 @@ function cleanResponseText(text) {
         .replace(/<tool_result[\s\S]*?<\/tool_result>/g, '')
         .replace(/<previous_response>[\s\S]*?<\/previous_response>/g, '');
 
-    // Strip all "Tool Result:" / "Tool Results:" prefixed blocks.
-    // Split by double newline, keep only sections that don't start with "Tool Result"
+    // Strip "Tool Result(s):" blocks and any raw data that follows them.
+    // Tool output patterns: "Tool Result:" header, pipe-delimited data (123|name|amount|...),
+    // JSON blobs ({...}), and file paths (/root/...).
+    // Strategy: find the last "Tool Result:" block, strip everything from start up to
+    // where the actual response text begins after it.
     if (/Tool Results?:/i.test(cleaned)) {
-        const sections = cleaned.split(/\n\n+/);
-        const kept = sections.filter(s => !/^\s*Tool Results?:/i.test(s));
-        cleaned = kept.join('\n\n');
+        const lines = cleaned.split('\n');
+        let lastToolResultEnd = -1;
+        let inToolResult = false;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (/^Tool Results?:/i.test(line)) {
+                inToolResult = true;
+                lastToolResultEnd = i;
+            } else if (inToolResult) {
+                // Tool output: pipe-delimited data, JSON, file paths, empty lines
+                if (line === '' || /^\d+\|/.test(line) || /^\{/.test(line) || /^\/\w/.test(line)) {
+                    lastToolResultEnd = i;
+                } else {
+                    inToolResult = false;
+                }
+            }
+        }
+        if (lastToolResultEnd >= 0) {
+            cleaned = lines.slice(lastToolResultEnd + 1).join('\n');
+        }
     }
 
     return cleaned.trim();
