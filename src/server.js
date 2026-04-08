@@ -332,13 +332,20 @@ function parseToolCalls(text) {
  */
 function cleanResponseText(text) {
     if (!text) return text;
-    return text
+    let cleaned = text
         .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
         .replace(/<tool_result[\s\S]*?<\/tool_result>/g, '')
-        .replace(/<previous_response>[\s\S]*?<\/previous_response>/g, '')
-        // Strip "Tool Results:" blocks that Claude echoes from context
-        .replace(/Tool Results?:\s*\n[\s\S]*?(?=\n\n|$)/g, '')
-        .trim();
+        .replace(/<previous_response>[\s\S]*?<\/previous_response>/g, '');
+
+    // Strip all "Tool Result:" / "Tool Results:" prefixed blocks.
+    // Split by double newline, keep only sections that don't start with "Tool Result"
+    if (/Tool Results?:/i.test(cleaned)) {
+        const sections = cleaned.split(/\n\n+/);
+        const kept = sections.filter(s => !/^\s*Tool Results?:/i.test(s));
+        cleaned = kept.join('\n\n');
+    }
+
+    return cleaned.trim();
 }
 
 // ─── API app (port 3456, localhost only) ──────────────────────────────────────
