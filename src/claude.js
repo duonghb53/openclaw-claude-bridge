@@ -236,6 +236,12 @@ function runClaude(systemPrompt, promptText, modelId, onChunk, signal, reasoning
             if (code !== 0 && !fullText) {
                 reject(new Error(`Claude exited with code ${code}`));
             } else {
+                // Detect billing/API errors in output and reject instead of forwarding
+                if (fullText && /API Error: \d+.*"type":"error"/.test(fullText)) {
+                    const msgMatch = fullText.match(/"message":"([^"]+)"/);
+                    reject(new Error(msgMatch ? msgMatch[1] : 'Claude API error'));
+                    return;
+                }
                 // Inbound: restore alias → openclaw
                 if (fullText) {
                     fullText = fullText
