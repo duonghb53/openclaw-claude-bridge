@@ -154,44 +154,9 @@ const responseMap = new Map();
 const MEMORY_GC_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 // Per-channel concurrent request limit (prevents bug loops while allowing multi-channel usage)
-const MAX_PER_CHANNEL = parseInt(process.env.MAX_PER_CHANNEL) || 1;
+const MAX_PER_CHANNEL = parseInt(process.env.MAX_PER_CHANNEL) || 2;
 const MAX_GLOBAL = parseInt(process.env.MAX_GLOBAL) || 20;
 const channelActive = new Map(); // channel → count of in-flight requests
-
-// --- Dedup: prevent OC from sending the same message multiple times ---
-const DEDUP_TTL_MS = parseInt(process.env.DEDUP_TTL_MS) || 30000; // 30s window
-const dedupCache = new Map(); // dedupKey → { response, expireAt }
-
-/** Build a dedup key from routingKey + Telegram message_id (or last user content).
- *  Uses message_id for stable dedup across tool loops. */
-function buildDedupKey(routingKey, messages) {
-    if (!routingKey) return null;
-    for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role !== 'user') continue;
-        const content = typeof messages[i].content === 'string'
-            ? messages[i].content
-            : Array.isArray(messages[i].content)
-                ? messages[i].content.filter(p => p.type === 'text').map(p => p.text).join('')
-                : '';
-        // Skip OC system messages
-        if (content.startsWith('Pre-compaction') || content.startsWith('Read HEARTBEAT') || content.startsWith('The conversation history before')) continue;
-        // Use Telegram message_id for stable key across tool loop retries
-        const msgIdMatch = content.match(/"message_id":\s*"(\d+)"/);
-        if (msgIdMatch) {
-            return `${routingKey}::msg:${msgIdMatch[1]}`;
-        }
-        return `${routingKey}::${content.slice(0, 500)}`;
-    }
-    return null;
-}
-
-// Evict expired dedup entries every 30s
-setInterval(() => {
-    const now = Date.now();
-    for (const [k, v] of dedupCache) {
-        if (v.expireAt < now) dedupCache.delete(k);
-    }
-}, 30000).unref();
 
 /** First 200 chars of text as a lookup key. */
 function contentKey(text) {
@@ -332,40 +297,11 @@ function parseToolCalls(text) {
  */
 function cleanResponseText(text) {
     if (!text) return text;
-    let cleaned = text
+    return text
         .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
         .replace(/<tool_result[\s\S]*?<\/tool_result>/g, '')
-        .replace(/<previous_response>[\s\S]*?<\/previous_response>/g, '');
-
-    // Strip "Tool Result(s):" blocks and any raw data that follows them.
-    // Tool output patterns: "Tool Result:" header, pipe-delimited data (123|name|amount|...),
-    // JSON blobs ({...}), and file paths (/root/...).
-    // Strategy: find the last "Tool Result:" block, strip everything from start up to
-    // where the actual response text begins after it.
-    if (/Tool Results?:/i.test(cleaned)) {
-        const lines = cleaned.split('\n');
-        let lastToolResultEnd = -1;
-        let inToolResult = false;
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (/^Tool Results?:/i.test(line)) {
-                inToolResult = true;
-                lastToolResultEnd = i;
-            } else if (inToolResult) {
-                // Tool output: pipe-delimited data, JSON, file paths, empty lines
-                if (line === '' || /^\d+\|/.test(line) || /^\{/.test(line) || /^\/\w/.test(line)) {
-                    lastToolResultEnd = i;
-                } else {
-                    inToolResult = false;
-                }
-            }
-        }
-        if (lastToolResultEnd >= 0) {
-            cleaned = lines.slice(lastToolResultEnd + 1).join('\n');
-        }
-    }
-
-    return cleaned.trim();
+        .replace(/<previous_response>[\s\S]*?<\/previous_response>/g, '')
+        .trim();
 }
 
 // ─── API app (port 3456, localhost only) ──────────────────────────────────────
@@ -503,21 +439,6 @@ app.post('/v1/chat/completions', async (req, res) => {
             : null;
         if (routingKey) {
             console.log(`[${requestId}] OC channel: "${convLabel}" agent: "${agentName || '(none)'}" routingKey: "${routingKey}"`);
-        }
-
-        // --- Dedup: return cached response if OC retries the same message ---
-        const dedupKey = buildDedupKey(routingKey, messages);
-        if (dedupKey && dedupCache.has(dedupKey)) {
-            const cached = dedupCache.get(dedupKey);
-            if (cached.expireAt > Date.now()) {
-                console.log(`[${requestId}] DEDUP HIT: returning cached response for "${routingKey}" (${Math.round((cached.expireAt - Date.now()) / 1000)}s left)`);
-                logEntry.status = 'ok';
-                logEntry.resumeMethod = 'dedup';
-                logEntry.durationMs = Date.now() - startTime;
-                pushActivity(requestId, `♻ dedup hit — cached response`);
-                return res.json(cached.response);
-            }
-            dedupCache.delete(dedupKey);
         }
 
         // --- Per-channel and global concurrent limits ---
@@ -707,14 +628,8 @@ app.post('/v1/chat/completions', async (req, res) => {
         logEntry.channel = convLabel ? convLabel.replace(/^Guild\s+/, '').slice(0, 30) : null;
         logEntry.agent = agentName || null;
         console.log(`[${requestId}] model=${model} tools=${tools.length} promptLen=${promptText.length} resume=${isResume}`);
-        if (process.env.DEBUG_IO) {
-            console.log(`[${requestId}] INPUT>>>\n${promptText.slice(0, 2000)}${promptText.length > 2000 ? '\n[... truncated]' : ''}\n<<<INPUT`);
-        }
 
-        // Force non-stream: always buffer full response and return as single JSON
-        // OC sends stream=true but for Telegram/chat we only need the final result
-        const FORCE_NO_STREAM = process.env.FORCE_NO_STREAM === '1';
-        const isStream = FORCE_NO_STREAM ? false : stream !== false;
+        const isStream = stream !== false;
         if (isStream) {
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
@@ -738,16 +653,7 @@ app.post('/v1/chat/completions', async (req, res) => {
             if (isStream) { res.write(`data: ${JSON.stringify(chunk)}\n\n`); chunksSent++; }
         };
 
-        // Send an initial SSE comment as keepalive so OC knows the connection is alive
-        // and doesn't retry/timeout while Claude is thinking.
-        if (isStream) {
-            res.write(': keepalive\n\n');
-        }
-
-        // Progress: logged server-side + captured for dashboard.
-        // Also send periodic SSE comments to keep the connection alive.
-        let lastKeepalive = Date.now();
-        const KEEPALIVE_INTERVAL_MS = 15000; // 15s
+        // Progress: logged server-side + captured for dashboard (not streamed to client)
         const onChunk = (text) => {
             const msg = text.trim();
             if (!msg) return;
@@ -755,12 +661,6 @@ app.post('/v1/chat/completions', async (req, res) => {
             console.log(`[${requestId}] ${msg}`);
             logEntry.activity.push(msg);
             pushActivity(requestId, msg);
-
-            // Send SSE comment keepalive periodically while Claude is working
-            if (isStream && Date.now() - lastKeepalive > KEEPALIVE_INTERVAL_MS) {
-                res.write(': keepalive\n\n');
-                lastKeepalive = Date.now();
-            }
         };
 
         // Abort signal: kill Claude CLI when client disconnects before response is sent
@@ -825,10 +725,6 @@ app.post('/v1/chat/completions', async (req, res) => {
                 }
                 return;
             }
-        }
-
-        if (process.env.DEBUG_IO) {
-            console.log(`[${requestId}] OUTPUT>>>\n${(finalText || '').slice(0, 2000)}${(finalText || '').length > 2000 ? '\n[... truncated]' : ''}\n<<<OUTPUT`);
         }
 
         logEntry.inputTokens = finalUsage.input_tokens;
@@ -975,17 +871,6 @@ app.post('/v1/chat/completions', async (req, res) => {
         const rKey = contentKey(cleanedForMap);
         if (rKey) {
             responseMap.set(rKey, { sessionId, createdAt: Date.now() });
-        }
-
-        // Cache response for dedup (non-tool-call responses only)
-        if (dedupKey && toolCalls.length === 0) {
-            const cachedResponse = {
-                id: completionId, object: 'chat.completion',
-                created: Math.floor(Date.now() / 1000), model,
-                choices: [{ index: 0, message: { role: 'assistant', content: cleanResponseText(finalText) || '' }, finish_reason: 'stop' }],
-                usage: usagePayload,
-            };
-            dedupCache.set(dedupKey, { response: cachedResponse, expireAt: Date.now() + DEDUP_TTL_MS });
         }
 
         logEntry.status = 'ok';

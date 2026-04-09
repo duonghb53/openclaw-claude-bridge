@@ -1,21 +1,19 @@
 [Unit]
-Description=OpenClaw Claude Bridge
+Description=OpenClaw Claude Bridge - OpenClaw to Claude Code CLI Proxy
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/root/openclaw-claude-bridge
-ExecStart=/root/.nvm/versions/node/v24.14.1/bin/node src/index.js
+# Update these two paths to match your installation directory
+WorkingDirectory=%h/openclaw-claude-bridge
+EnvironmentFile=%h/openclaw-claude-bridge/.env
+ExecStart=/usr/bin/node src/index.js
 KillMode=process
 TimeoutStopSec=180
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-Environment=HOME=/root
-Environment=CLAUDE_BIN=/root/.nvm/versions/node/v24.14.1/bin/claude
-Environment=DEBUG_IO=1
-Environment=FORCE_NO_STREAM=1
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
