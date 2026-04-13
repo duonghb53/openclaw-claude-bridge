@@ -310,9 +310,11 @@ function parseToolCalls(text) {
 function cleanResponseText(text) {
     if (!text) return text;
     return text
+        .replace(/<tool_thinking>[\s\S]*?<\/tool_thinking>/g, '')
         .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
         .replace(/<tool_result[\s\S]*?<\/tool_result>/g, '')
         .replace(/<previous_response>[\s\S]*?<\/previous_response>/g, '')
+        .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
 
