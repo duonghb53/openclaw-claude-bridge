@@ -277,15 +277,30 @@ function parseToolCalls(text) {
     const calls = [];
     let match;
     while ((match = regex.exec(text)) !== null) {
+        const raw = (match[1] || '').trim();
+        const start = raw.indexOf('{');
+        const end = raw.lastIndexOf('}');
+        if (start === -1 || end === -1 || end < start) {
+            console.error(`[parseToolCalls] No JSON object found in block: ${raw.slice(0, 300)}`);
+            continue;
+        }
+        const jsonText = raw.slice(start, end + 1);
         try {
-            const parsed = JSON.parse(match[1]);
+            const parsed = JSON.parse(jsonText);
+            if (!parsed || typeof parsed.name !== 'string') {
+                console.error(`[parseToolCalls] Invalid tool_call payload: ${jsonText.slice(0, 300)}`);
+                continue;
+            }
+            const args = (parsed.arguments && typeof parsed.arguments === 'object' && !Array.isArray(parsed.arguments))
+                ? parsed.arguments
+                : {};
             calls.push({
                 id: `call_${uuidv4().slice(0, 8)}`,
                 name: parsed.name,
-                arguments: parsed.arguments || {},
+                arguments: args,
             });
         } catch (err) {
-            console.error(`[parseToolCalls] Failed to parse: ${match[1]}`);
+            console.error(`[parseToolCalls] Failed to parse JSON: ${jsonText.slice(0, 300)}`);
         }
     }
     return calls;
@@ -297,10 +312,17 @@ function parseToolCalls(text) {
  */
 function cleanResponseText(text) {
     if (!text) return text;
-    return text
+    const stripped = text
+        .replace(/<tool_thinking>[\s\S]*?<\/tool_thinking>/g, '')
         .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
         .replace(/<tool_result[\s\S]*?<\/tool_result>/g, '')
-        .replace(/<previous_response>[\s\S]*?<\/previous_response>/g, '')
+        .replace(/<previous_response>[\s\S]*?<\/previous_response>/g, '');
+    // Collapse 3+ newlines only OUTSIDE fenced code blocks, to preserve
+    // intentional formatting inside triple-backtick fences.
+    const parts = stripped.split(/(```[\s\S]*?```)/);
+    return parts
+        .map((part, idx) => idx % 2 === 0 ? part.replace(/\n{3,}/g, '\n\n') : part)
+        .join('')
         .trim();
 }
 
